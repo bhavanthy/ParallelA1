@@ -9,6 +9,7 @@
 #include <stdbool.h> /* Needed for boolean datatype */
 #include <math.h>
 #include <string.h>
+#include <pthread.h>
 
 	/* added scale and threads to allow command line controls */
 	/* scale controls how many times the height and width will increase */
@@ -19,7 +20,7 @@ int threads = 1;
 	/* change to 1 to create output image file image.ppm */
 	/* using the -o on the command line sets output==1 (creates the file) */
 int output = 0;
-
+// int currentSphere = -1;
 
 #define min(a,b) (((a) < (b)) ? (a) : (b))
 
@@ -62,7 +63,21 @@ typedef struct{
    vector pos;
    colour intensity;
 }light;
+// typedef struct task task;
+typedef struct a_task {
+   ray * r;
+   sphere * s;
+   float * t;
+   struct a_task * next;
+   int id;
+} task;
 
+ typedef struct {
+   task * head;
+   task * tail;
+   int total;
+ } queue;
+queue *q;
 /* Subtract two vectors and return the resulting vector */
 vector vectorSub(vector *v1, vector *v2){
    vector result = {v1->x - v2->x, v1->y - v2->y, v1->z - v2->z };
@@ -174,11 +189,85 @@ int i;
    else
       printf("output file image.ppm created\n");
 }
+int push (queue * q, ray * r, sphere * s, float * t){
+    task * new = malloc(sizeof(task));
+    if (new == NULL)
+        return -1;
+    new->r = r;
+    new->s = s;
+    new->t = t;
+    new->id = q->total+1;
+    new->next = NULL;
+
+    if (q->tail != NULL)
+        q->tail->next = new;
+
+    q->tail = new;
+    q->total = q->total+1;
+    if (q->head == NULL) /* first value */
+        q->head = new;
+    printf("added task: %d\n", q->total);
+    return 0;
+ }
+void length(){
+
+    task *temp = q->head;
+   int count = 0;
+    while(temp->next!= NULL){
+       temp = temp->next;
+       count++;
+    }
+    printf(".................length: %d\n",count);
+}
+void pop (){
+   if (q->head != NULL){
+   printf("in pop: %d\n",q->head->id);
+
+    task *current = q->head;
+    bool check = intersectRaySphere(current->r,current->s,current->t);
+    q->head = q->head->next;
+    free(current);  
+   }
+}
+void popAll(){
+    task *temp = q->head;
+    task *freeMe = NULL;
+    int count = 0;
+    printf("in popall\n");
+    while(temp->next!= NULL){
+       pop();
+       count++;
+    }
+    printf("Count: %d\n", count);
+   //  free(temp);
+}
+void * doTasks (void * k) {
+   long threadNum= (long) k;
+   printf("\n\n\n\nThread #: %d", (int)threadNum);
+   if (q->head == NULL) {
+      return NULL;
+   }
+   printf("lets pop it\n");
+   if(threadNum < threads-1){
+      pop();
+   } else {
+      popAll();
+   }
+   
+   return NULL;
+}
+void printThing(){
+   task * temp = q->head;
+   while(temp->next!= NULL){
+      printf("there is a task in queue\n");
+      temp = temp->next;
+   }
+}
 
 int main(int argc, char *argv[]){
 
    ray r;
-
+   q = malloc(sizeof(queue));
    readArgs(argc, argv);
    
    material materials[3];
@@ -243,9 +332,13 @@ int main(int argc, char *argv[]){
 	/* dynamically allocate framebuffer */
    unsigned char *img;
    img = malloc(sizeof(char) * (3*WIDTH*HEIGHT));
+   pthread_t * threadHandles; 
+   threadHandles = malloc (threads*sizeof(pthread_t)); 
+    q->head = NULL;
+    q->tail = NULL;
+    q->total = 0;
+   int x, y;   
    
-   int x, y;
-
 	/*** start timing here ****/
 
    for(y=0;y<HEIGHT;y++){
@@ -265,13 +358,21 @@ int main(int argc, char *argv[]){
          r.dir.x = 0;
          r.dir.y = 0;
          r.dir.z = 1;
-         
          do{
             /* Find closest intersection */
             float t = 20000.0f;
             int currentSphere = -1;
             
             unsigned int i;
+            // push to queue
+            printf("%d,%d",x,y);
+            for(int j = 0; j < 3; j++) {
+               push(q, &r, &spheres[i], &t);
+            }
+            for(long k = 0; k < threads; k++){
+               pthread_create(&threadHandles[k], NULL, doTasks, (void *) k); 
+            }
+            
             for(i = 0; i < 3; i++){
                if(intersectRaySphere(&r, &spheres[i], &t))
                   currentSphere = i;
@@ -308,6 +409,7 @@ int main(int argc, char *argv[]){
                /* Calculate shadows */
                bool inShadow = false;
                unsigned int k;
+            
                for (k = 0; k < 3; ++k) {
                   if (intersectRaySphere(&lightRay, &spheres[k], &t)){
                      inShadow = true;
@@ -341,7 +443,6 @@ int main(int argc, char *argv[]){
 
       }
    }
-
       /*** end timing here ***/
    
 	/* only create output file image.ppm when -o is included on command line */

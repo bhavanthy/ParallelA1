@@ -9,4 +9,6 @@ data: data.c
 
 task: task.c
 	gcc task.c -o task -lm
+test: test.c
+	gcc test.c -o test -lm
 
